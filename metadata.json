@@ -1,0 +1,6 @@
+{
+  "name": "Android Desktop Suite",
+  "description": "An all-in-one Windows 11 style Android device management, ADB/Fastboot studio, file manager, screen mirroring, utilities and AI suite.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
