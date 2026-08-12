@@ -73,7 +73,7 @@ fun DesktopScreen(
             contentDescription = "Desktop Wallpaper",
             modifier = Modifier.fillMaxSize(),
             contentScale = ContentScale.Crop,
-            alpha = if (isDark) 0.45f else 0.25f
+            alpha = if (isDark) 0.95f else 0.85f
         )
 
         // Top Right Desktop Clock & Performance Gadget Widget (matching reference image)
@@ -577,8 +577,20 @@ fun Taskbar(
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         Icon(
+                            imageVector = Icons.Default.KeyboardArrowUp,
+                            contentDescription = "Hidden icons",
+                            tint = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Icon(
                             imageVector = Icons.Default.Wifi,
                             contentDescription = "Wi-Fi",
+                            tint = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Icon(
+                            imageVector = Icons.Default.VolumeUp,
+                            contentDescription = "Volume",
                             tint = MaterialTheme.colorScheme.onSurface,
                             modifier = Modifier.size(16.dp)
                         )
