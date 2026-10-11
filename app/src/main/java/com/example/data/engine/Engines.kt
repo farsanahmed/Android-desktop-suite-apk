@@ -1,13 +1,19 @@
 package com.example.data.engine
 
+import android.app.ActivityManager
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.ApplicationInfo
+import android.content.pm.PackageManager
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.os.BatteryManager
 import android.os.Build
 import android.os.Environment
 import android.os.StatFs
 import android.os.SystemClock
+import android.util.Log
 import com.example.data.model.AppPackageInfo
 import com.example.data.model.DeviceMetrics
 import com.example.data.model.FileItem
@@ -23,8 +29,11 @@ import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.InputStreamReader
 import java.net.InetAddress
+import java.net.InetSocketAddress
 import java.net.NetworkInterface
+import java.net.Socket
 import java.util.Collections
+import java.util.concurrent.TimeUnit
 import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
@@ -35,285 +44,367 @@ class DeviceDiagnosticEngine(private val context: Context) {
         val batteryStatus: Intent? = IntentFilter(Intent.ACTION_BATTERY_CHANGED).let { filter ->
             context.registerReceiver(null, filter)
         }
-        val batteryLevel = batteryStatus?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: 85
+        val batteryLevel = batteryStatus?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
         val batteryScale = batteryStatus?.getIntExtra(BatteryManager.EXTRA_SCALE, -1) ?: 100
-        val pct = (batteryLevel / batteryScale.toFloat() * 100).toInt()
+        val pct = if (batteryLevel >= 0 && batteryScale > 0) {
+            (batteryLevel / batteryScale.toFloat() * 100).toInt()
+        } else {
+            -1 // N/A
+        }
         val status = batteryStatus?.getIntExtra(BatteryManager.EXTRA_STATUS, -1) ?: -1
         val isCharging = status == BatteryManager.BATTERY_STATUS_CHARGING || status == BatteryManager.BATTERY_STATUS_FULL
-        val tempTenths = batteryStatus?.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, 320) ?: 320
-        val batteryTempC = tempTenths / 10.0f
+        val tempTenths = batteryStatus?.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, -1) ?: -1
+        val batteryTempC = if (tempTenths > 0) tempTenths / 10.0f else -1f
 
-        // RAM Info
-        val actManager = context.getSystemService(Context.ACTIVITY_SERVICE) as? android.app.ActivityManager
-        val memInfo = android.app.ActivityManager.MemoryInfo()
-        actManager?.getMemoryInfo(memInfo)
-        val ramTotalMb = (memInfo.totalMem / (1024 * 1024))
-        val ramUsedMb = ((memInfo.totalMem - memInfo.availMem) / (1024 * 1024))
+        // Memory info
+        val memInfo = ActivityManager.MemoryInfo()
+        val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+        activityManager.getMemoryInfo(memInfo)
+        val ramTotalMb = (memInfo.totalMem / (1024 * 1024)).toLong()
+        val ramUsedMb = ramTotalMb - (memInfo.availMem / (1024 * 1024)).toLong()
 
-        // Storage Info
-        val stat = StatFs(Environment.getDataDirectory().path)
-        val totalBytes = stat.blockCountLong * stat.blockSizeLong
-        val availBytes = stat.availableBlocksLong * stat.blockSizeLong
-        val usedBytes = totalBytes - availBytes
-        val storageTotalGb = String.format("%.1f", totalBytes / (1024f * 1024f * 1024f)).toFloat()
-        val storageUsedGb = String.format("%.1f", usedBytes / (1024f * 1024f * 1024f)).toFloat()
+        // Storage info
+        val storagePath = Environment.getDataDirectory()
+        val statFs = StatFs(storagePath.path)
+        val blockSize = statFs.blockSizeLong
+        val totalBlocks = statFs.blockCountLong
+        val availableBlocks = statFs.availableBlocksLong
+        val storageTotalGb = (totalBlocks * blockSize / (1024.0 * 1024.0 * 1024.0)).toFloat()
+        val storageUsedGb = ((totalBlocks - availableBlocks) * blockSize / (1024.0 * 1024.0 * 1024.0)).toFloat()
 
-        // CPU & GPU
+        // CPU info
         val cpuCores = Runtime.getRuntime().availableProcessors()
-        val simulatedCpu = ((System.currentTimeMillis() / 500) % 40 + 15).toInt()
-        val gpuModel = "Adreno (TM) / Mali-G710 Vulkan 1.3"
+        val cpuUsagePercent = getCpuUsage() // -1 if not available
 
-        // Network IP & MAC
-        var ip = "192.168.1.105"
-        try {
-            val interfaces = Collections.list(NetworkInterface.getNetworkInterfaces())
-            for (intf in interfaces) {
-                val addrs = Collections.list(intf.inetAddresses)
-                for (addr in addrs) {
-                    if (!addr.isLoopbackAddress) {
-                        val host = addr.hostAddress
-                        if (host != null && host.indexOf(':') < 0) {
-                            ip = host
-                            break
-                        }
-                    }
-                }
-            }
-        } catch (e: Exception) {
-            // fallback
-        }
+        // Network info
+        val ipAddress = getLocalIpAddress() ?: "N/A"
+        val macAddress = getMacAddress() ?: "N/A"
 
-        // Root check
+        // Root & bootloader status
         val isRooted = checkRoot()
+        val isBootloaderUnlocked = checkBootloaderUnlocked()
+
+        // GPU info
+        val gpuModel = getGpuModel()
+
+        // Serial number (requires READ_PRIVILEGED_PHONE_STATE on Android 10+)
+        val serialNumber = getSerialNumber()
 
         DeviceMetrics(
-            model = Build.MODEL ?: "Android Workstation",
-            manufacturer = Build.MANUFACTURER?.replaceFirstChar { it.uppercase() } ?: "Google",
-            androidVersion = "Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})",
+            model = Build.MODEL,
+            manufacturer = Build.MANUFACTURER,
+            androidVersion = Build.VERSION.RELEASE,
             sdkInt = Build.VERSION.SDK_INT,
             batteryLevel = pct,
             isCharging = isCharging,
             batteryTempC = batteryTempC,
             ramUsedMb = ramUsedMb,
             ramTotalMb = ramTotalMb,
-            storageUsedGb = storageTotalGb.coerceAtLeast(1f),
-            storageTotalGb = storageTotalGb.coerceAtLeast(16f),
-            cpuUsagePercent = simulatedCpu,
+            storageUsedGb = storageUsedGb,
+            storageTotalGb = storageTotalGb,
+            cpuUsagePercent = cpuUsagePercent,
             cpuCores = cpuCores,
             gpuModel = gpuModel,
-            serialNumber = if (Build.SERIAL != "unknown") Build.SERIAL else "ADB-SUITE-88X92K",
-            ipAddress = ip,
-            macAddress = "02:00:00:00:00:00 (Protected)",
+            serialNumber = serialNumber,
+            ipAddress = ipAddress,
+            macAddress = macAddress,
             isRooted = isRooted,
-            isBootloaderUnlocked = true,
-            adbAuthorized = true,
-            connectionType = "USB 3.2 Gen2 / Wi-Fi 6 Direct"
+            isBootloaderUnlocked = isBootloaderUnlocked,
+            adbAuthorized = false, // Will be set by ADB connection manager
+            connectionType = "Unknown"
         )
     }
 
-    private fun checkRoot(): Boolean {
-        val paths = arrayOf("/system/app/Superuser.apk", "/sbin/su", "/system/bin/su", "/system/xbin/su", "/data/local/xbin/su", "/data/local/bin/su", "/system/sd/xbin/su")
-        for (path in paths) {
-            if (File(path).exists()) return true
+    private fun getCpuUsage(): Int {
+        // Reading /proc/stat for CPU usage - returns -1 if not available
+        return try {
+            val reader = InputStreamReader(File("/proc/stat").inputStream())
+            val firstLine = reader.readText().lines().firstOrNull()
+            if (firstLine != null && firstLine.startsWith("cpu ")) {
+                val parts = firstLine.split("\\s+".toRegex()).drop(1).map { it.toLong() }
+                val total = parts.sum()
+                val idle = parts.getOrNull(3) ?: 0
+                // This is a simplified calculation - real CPU usage needs two samples
+                ((total - idle) * 100 / total).toInt()
+            } else {
+                -1
+            }
+        } catch (e: Exception) {
+            -1 // N/A - cannot read CPU stats
         }
-        return false
+    }
+
+    private fun getLocalIpAddress(): String? {
+        try {
+            val interfaces = Collections.list(NetworkInterface.getNetworkInterfaces())
+            for (iface in interfaces) {
+                if (iface.isUp && !iface.isLoopback) {
+                    val addresses = Collections.list(iface.inetAddresses)
+                    for (addr in addresses) {
+                        if (addr is java.net.Inet4Address && !addr.isLoopbackAddress) {
+                            return addr.hostAddress
+                        }
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            // Ignore
+        }
+        return null
+    }
+
+    private fun getMacAddress(): String? {
+        try {
+            val interfaces = Collections.list(NetworkInterface.getNetworkInterfaces())
+            for (iface in interfaces) {
+                if (iface.isUp && !iface.isLoopback) {
+                    val hardwareAddr = iface.hardwareAddress
+                    if (hardwareAddr != null) {
+                        return hardwareAddr.joinToString(":") { "%02X".format(it) }
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            // Ignore
+        }
+        return null
+    }
+
+    private fun checkRoot(): Boolean {
+        val rootPaths = listOf(
+            "/system/bin/su", "/system/xbin/su", "/system/sbin/su",
+            "/sbin/su", "/vendor/bin/su", "/su/bin/su", "/magisk/.core/bin/su"
+        )
+        return rootPaths.any { File(it).exists() }
+    }
+
+    private fun checkBootloaderUnlocked(): Boolean {
+        return try {
+            val result = Runtime.getRuntime().exec("getprop ro.bootloader").inputStream().readText().trim()
+            result.isNotBlank() && !result.equals("unknown", ignoreCase = true) && !result.equals("locked", ignoreCase = true)
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    private fun getGpuModel(): String {
+        return try {
+            val gpuInfo = Runtime.getRuntime().exec("getprop ro.hardware.gpu").inputStream().readText().trim()
+            if (gpuInfo.isNotBlank()) gpuInfo else {
+                val glRenderer = Runtime.getRuntime().exec("getprop debug.egl.profiler").inputStream().readText().trim()
+                if (glRenderer.isNotBlank()) glRenderer else "Unknown"
+            }
+        } catch (e: Exception) {
+            "Unknown"
+        }
+    }
+
+    private fun getSerialNumber(): String {
+        return try {
+            // On Android 10+, this requires READ_PRIVILEGED_PHONE_STATE
+            Build.getSerial()
+        } catch (e: Exception) {
+            "N/A (requires privileged permission)"
+        }
+    }
+
+    suspend fun getInstalledPackages(): List<AppPackageInfo> = withContext(Dispatchers.IO) {
+        val pm = context.packageManager
+        val packages = pm.getInstalledApplications(PackageManager.GET_META_DATA)
+        packages.map { app ->
+            val appInfo = pm.getApplicationInfo(app.packageName, 0)
+            val versionInfo = try {
+                pm.getPackageInfo(app.packageName, 0)
+            } catch (e: Exception) {
+                null
+            }
+            
+            val sizeBytes = try {
+                val appFile = File(appInfo.sourceDir)
+                if (appFile.exists()) appFile.length() else 0L
+            } catch (e: Exception) {
+                0L
+            }
+            
+            AppPackageInfo(
+                appName = pm.getApplicationLabel(appInfo).toString(),
+                packageName = app.packageName,
+                versionName = versionInfo?.versionName ?: "Unknown",
+                versionCode = versionInfo?.longVersionCode ?: 0,
+                sizeBytes = sizeBytes,
+                isSystemApp = (appInfo.flags and ApplicationInfo.FLAG_SYSTEM) != 0,
+                targetSdk = appInfo.targetSdkVersion,
+                isInstalled = true
+            )
+        }.toList()
     }
 }
 
-class AdbFastbootEngine(val connectionManager: AdbConnectionManager = AdbConnectionManager()) {
+class AdbFastbootEngine(private val connectionManager: AdbConnectionManager) {
 
     suspend fun executeAdbCommand(command: String): Pair<String, Boolean> = withContext(Dispatchers.IO) {
-        val trimmed = command.trim()
-        if (trimmed.isEmpty()) return@withContext Pair("No command provided.", false)
-
-        val isFastboot = trimmed.startsWith("fastboot")
-        val cleanCmd = trimmed.removePrefix("adb ").removePrefix("fastboot ")
-
-        return@withContext try {
-            if (cleanCmd.startsWith("connect") || cleanCmd.startsWith("disconnect") || cleanCmd == "kill-server" || cleanCmd == "start-server") {
-                connectionManager.executeCommand(trimmed)
-            } else if (cleanCmd.startsWith("shell ") || cleanCmd == "shell") {
-                val shellSub = cleanCmd.removePrefix("shell").trim()
-                if (shellSub.isEmpty()) {
-                    Pair("Android Shell session initialized.\nType shell commands like 'ls', 'getprop', 'top', 'pm list packages'.", false)
-                } else {
-                    connectionManager.executeCommand(shellSub)
-                }
-            } else if (cleanCmd.startsWith("devices")) {
-                val activeDev = connectionManager.activeDevice.value
-                val activeStr = if (activeDev != null) "${activeDev.serial}\tdevice  (${activeDev.model})" else "No active devices connected."
-                Pair("List of devices attached\n$activeStr\n192.168.1.105:5555\tdevice  (Wireless Debugging)", false)
-            } else if (cleanCmd.startsWith("reboot")) {
-                val target = cleanCmd.removePrefix("reboot").trim()
-                when (target) {
-                    "recovery" -> Pair("Rebooting device to Recovery mode...", false)
-                    "bootloader" -> Pair("Rebooting device to Fastboot/Bootloader mode...", false)
-                    "sideload" -> Pair("Rebooting device to Sideload mode...", false)
-                    else -> Pair("Rebooting device...", false)
-                }
-            } else if (cleanCmd.startsWith("install")) {
-                val apk = cleanCmd.removePrefix("install").trim()
-                Pair("Success: $apk installed to /data/app/", false)
-            } else if (cleanCmd.startsWith("uninstall")) {
-                val pkg = cleanCmd.removePrefix("uninstall").trim()
-                Pair("Success: Package $pkg uninstalled.", false)
-            } else if (cleanCmd.startsWith("logcat")) {
-                val logs = StringBuilder()
-                logs.append("--------- beginning of main\n")
-                logs.append("I/ActivityManager: START u0 {act=android.intent.action.MAIN cat=[android.intent.category.LAUNCHER]} h=928a11\n")
-                logs.append("D/AndroidDesktopSuite: ADB Service connected successfully.\n")
-                logs.append("I/WindowState: Animated Surface View created for Desktop Window.\n")
-                logs.append("D/SystemMonitor: Memory stats updated: 3412MB / 7820MB free.\n")
-                logs.append("V/MediaSuite: Audio track loaded into buffer.\n")
-                Pair(logs.toString(), false)
-            } else if (isFastboot) {
-                handleFastbootCommand(cleanCmd)
-            } else {
-                runNativeShell(cleanCmd)
-            }
-        } catch (e: Exception) {
-            Pair("Error executing command: ${e.message}", true)
-        }
+        // Strip "adb " prefix if present
+        val cleanCmd = command.trim().removePrefix("adb ").trim()
+        return connectionManager.executeShellCommand(cleanCmd)
     }
 
-    private fun handleFastbootCommand(cmd: String): Pair<String, Boolean> {
-        val trimmed = cmd.trim()
-        return when {
-            trimmed.startsWith("devices") -> Pair("88X92K019381\tfastboot", false)
-            trimmed.startsWith("getvar all") -> Pair(
-                """
-                (bootloader) version: 0.5
-                (bootloader) version-bootloader: suite-fastboot-v2.4
-                (bootloader) version-baseband: g930-v1.2
-                (bootloader) product: desktop_suite_device
-                (bootloader) secure: yes
-                (bootloader) unlocked: yes
-                (bootloader) battery-voltage: 4180mV
-                (bootloader) partition-type:boot: raw
-                (bootloader) partition-size:boot: 0x4000000
-                (bootloader) partition-type:system: ext4
-                all: Done.
-                """.trimIndent(), false
-            )
-            trimmed.startsWith("oem unlock") || trimmed.startsWith("flashing unlock") -> Pair(
-                "WARNING: Unlocking bootloader will erase user data!\n[OKAY] Device bootloader unlocked successfully.", false
-            )
-            trimmed.startsWith("oem lock") || trimmed.startsWith("flashing lock") -> Pair(
-                "[OKAY] Device bootloader locked.", false
-            )
-            trimmed.startsWith("flash") -> Pair(
-                "Sending '$trimmed' (32768 KB)... OKAY [  0.812s]\nWriting '$trimmed'... OKAY [  1.240s]\nFinished. Total time: 2.052s", false
-            )
-            trimmed.startsWith("erase") -> Pair(
-                "Erasing partition... OKAY [  0.150s]\nFinished. Total time: 0.150s", false
-            )
-            else -> Pair("fastboot: executed $trimmed [OKAY]", false)
-        }
-    }
-
-    private fun runNativeShell(command: String): Pair<String, Boolean> {
-        return try {
-            val process = Runtime.getRuntime().exec(arrayOf("sh", "-c", command))
-            val reader = InputStreamReader(process.inputStream)
-            val errReader = InputStreamReader(process.errorStream)
-            val output = reader.readText()
-            val error = errReader.readText()
-            process.waitFor()
-
-            if (error.isNotBlank() && output.isBlank()) {
-                Pair(error, true)
-            } else {
-                Pair((output + if (error.isNotBlank()) "\n[stderr]: $error" else "").ifEmpty { "Command executed with status code ${process.exitValue()}." }, false)
-            }
-        } catch (e: Exception) {
-            Pair("Fallback Shell execution note: ${e.message}\nOutput simulated: command '$command' completed.", false)
-        }
+    // Fastboot commands are NOT available over network ADB
+    // Fastboot requires USB connection in bootloader mode
+    suspend fun executeFastbootCommand(command: String): Pair<String, Boolean> = withContext(Dispatchers.IO) {
+        return Pair(
+            "Fastboot is not available over network ADB.\n" +
+            "Fastboot requires:\n" +
+            "1. Device in bootloader/fastboot mode (power + volume down)\n" +
+            "2. USB connection to host computer\n" +
+            "3. Host running fastboot binary\n\n" +
+            "This app cannot execute fastboot commands remotely.\n" +
+            "Use a computer with Android SDK Platform Tools instead.",
+            true
+        )
     }
 }
 
 class FileCompressionEngine {
 
-    suspend fun getFilesForDirectory(dirPath: String): List<FileItem> = withContext(Dispatchers.IO) {
-        val fileList = mutableListOf<FileItem>()
-        val targetDir = File(dirPath)
+    private val MAX_EXTRACT_SIZE = 1L * 1024 * 1024 * 1024 // 1GB limit
+    private val MAX_FILE_COUNT = 10000
 
-        if (targetDir.exists() && targetDir.isDirectory && (targetDir.listFiles()?.isNotEmpty() == true)) {
-            val files = targetDir.listFiles()
-            files?.forEach { file ->
-                fileList.add(
-                    FileItem(
-                        name = file.name,
-                        path = file.absolutePath,
-                        sizeBytes = if (file.isDirectory) 0L else file.length(),
-                        isDirectory = file.isDirectory,
-                        lastModified = file.lastModified(),
-                        permissions = if (file.canWrite()) "rw-r--r--" else "r--r--r--"
-                    )
-                )
-            }
-        } else {
-            // Provide exact reference image items for Documents view
-            fileList.addAll(listOf(
-                FileItem("Projects", "$dirPath/Projects", 0, true, 1753609260000L),
-                FileItem("Work", "$dirPath/Work", 0, true, 1753546920000L),
-                FileItem("Personal", "$dirPath/Personal", 0, true, 1753474200000L),
-                FileItem("Notes", "$dirPath/Notes", 0, true, 1753367460000L),
-                FileItem("Todo.txt", "$dirPath/Todo.txt", 2048, false, 1753269300000L)
-            ))
+    suspend fun getFilesForDirectory(path: String): List<FileItem> = withContext(Dispatchers.IO) {
+        val dir = File(path)
+        if (!dir.exists() || !dir.isDirectory) {
+            return@withContext emptyList()
         }
-
-        fileList.sortedWith(compareBy({ !it.isDirectory }, { it.name.lowercase() }))
+        
+        return@withContext try {
+            dir.listFiles()?.map { file ->
+                FileItem(
+                    name = file.name,
+                    path = file.absolutePath,
+                    sizeBytes = if (file.isDirectory) 0 else file.length(),
+                    isDirectory = file.isDirectory,
+                    lastModified = file.lastModified(),
+                    permissions = getPermissions(file)
+                )
+            }.sortedBy { it.name }.toList() ?: emptyList()
+        } catch (e: Exception) {
+            emptyList()
+        }
     }
 
-    suspend fun compressZip(sourcePath: String, destZipPath: String): String = withContext(Dispatchers.IO) {
+    private fun getPermissions(file: File): String {
+        val sb = StringBuilder()
+        sb.append(if (file.canRead()) "r" else "-")
+        sb.append(if (file.canWrite()) "w" else "-")
+        sb.append(if (file.canExecute()) "x" else "-")
+        sb.append(if (file.canRead()) "r" else "-")
+        sb.append(if (file.canWrite()) "w" else "-")
+        sb.append(if (file.canExecute()) "x" else "-")
+        sb.append(if (file.canRead()) "r" else "-")
+        sb.append(if (file.canWrite()) "w" else "-")
+        sb.append(if (file.canExecute()) "x" else "-")
+        return sb.toString()
+    }
+
+    suspend fun compressZip(sourcePath: String, zipPath: String): String = withContext(Dispatchers.IO) {
         try {
-            val srcFile = File(sourcePath)
-            val zipFile = File(destZipPath)
+            val zipFile = File(zipPath)
+            zipFile.parentFile?.mkdirs()
+            
+            var fileCount = 0
             ZipOutputStream(BufferedOutputStream(FileOutputStream(zipFile))).use { zos ->
-                if (srcFile.isDirectory) {
-                    srcFile.walk().forEach { f ->
-                        if (!f.isDirectory) {
-                            val relPath = srcFile.toPath().relativize(f.toPath()).toString()
-                            val entry = ZipEntry(relPath)
-                            zos.putNextEntry(entry)
-                            FileInputStream(f).use { fis -> fis.copyTo(zos) }
-                            zos.closeEntry()
-                        }
-                    }
+                val sourceFile = File(sourcePath)
+                if (sourceFile.isDirectory) {
+                    addToZip(sourceFile, sourceFile.name, zos)
                 } else {
-                    val entry = ZipEntry(srcFile.name)
-                    zos.putNextEntry(entry)
-                    FileInputStream(srcFile).use { fis -> fis.copyTo(zos) }
-                    zos.closeEntry()
+                    addToZip(sourceFile, sourceFile.name, zos)
                 }
             }
-            "Successfully created archive: ${zipFile.name}"
+            "Successfully compressed to $zipPath"
         } catch (e: Exception) {
-            "Compression note: ${e.message}. Created virtual package archive."
+            "Compression failed: ${e.message}"
         }
     }
 
-    suspend fun extractZip(zipPath: String, destDirPath: String): String = withContext(Dispatchers.IO) {
-        try {
-            val destDir = File(destDirPath)
-            if (!destDir.exists()) destDir.mkdirs()
+    private fun addToZip(file: File, path: String, zos: ZipOutputStream) {
+        if (file.isDirectory) {
+            zos.putNextEntry(ZipEntry("$path/"))
+            zos.closeEntry()
+            file.listFiles()?.forEach { child ->
+                addToZip(child, "$path/${child.name}", zos)
+            }
+        } else {
+            zos.putNextEntry(ZipEntry(path))
+            FileInputStream(file).use { fis ->
+                fis.copyTo(zos)
+            }
+            zos.closeEntry()
+        }
+    }
 
-            ZipInputStream(BufferedInputStream(FileInputStream(zipPath))).use { zis ->
+    suspend fun extractZip(zipPath: String, destDirPath: String, progressCallback: ((Int, Int) -> Unit)? = null): String = withContext(Dispatchers.IO) {
+        try {
+            val zipFile = File(zipPath)
+            val destDir = File(destDirPath)
+            
+            if (!zipFile.exists()) {
+                return "Error: ZIP file not found"
+            }
+            if (!destDir.exists()) {
+                destDir.mkdirs()
+            }
+            
+            // Canonical destination path for Zip Slip protection
+            val canonicalDest = destDir.canonicalPath
+            
+            ZipInputStream(BufferedInputStream(FileInputStream(zipFile))).use { zis ->
                 var entry: ZipEntry? = zis.nextEntry
+                var fileCount = 0
+                var totalSize = 0L
+                
                 while (entry != null) {
-                    val newFile = File(destDir, entry.name)
+                    if (fileCount >= MAX_FILE_COUNT) {
+                        return@withContext "Error: Maximum file count ($MAX_FILE_COUNT) exceeded"
+                    }
+                    
+                    // Zip Slip protection: canonical path check
+                    val newFile = File(destDir, entry.name).canonicalFile
+                    if (!newFile.path.startsWith(canonicalDest)) {
+                        return@withContext "Error: Zip Slip attempt detected - entry: ${entry.name}"
+                    }
+                    
+                    // Check total extracted size
+                    if (entry.size > 0 && totalSize + entry.size > MAX_EXTRACT_SIZE) {
+                        return@withContext "Error: Extracted size would exceed ${MAX_EXTRACT_SIZE / (1024*1024*1024)}GB limit"
+                    }
+                    
                     if (entry.isDirectory) {
                         newFile.mkdirs()
                     } else {
-                        File(newFile.parent).mkdirs()
-                        FileOutputStream(newFile).use { fos -> zis.copyTo(fos) }
+                        newFile.parentFile?.mkdirs()
+                        FileOutputStream(newFile).use { fos ->
+                            zis.copyTo(fos)
+                        }
+                        totalSize += entry.size
                     }
+                    
+                    fileCount++
+                    progressCallback?.invoke(fileCount, MAX_FILE_COUNT)
                     entry = zis.nextEntry
                 }
+                
+                "Successfully extracted $fileCount files (${formatSize(totalSize)}) to $destDirPath"
             }
-            "Successfully extracted archive to $destDirPath"
         } catch (e: Exception) {
-            "Extraction completed: contents unpacked to target destination."
+            "Extraction failed: ${e.message}"
+        }
+    }
+
+    private fun formatSize(bytes: Long): String {
+        return when {
+            bytes >= 1L * 1024 * 1024 * 1024 -> String.format("%.2f GB", bytes / (1024.0 * 1024.0 * 1024.0))
+            bytes >= 1024 * 1024 -> String.format("%.2f MB", bytes / (1024.0 * 1024.0))
+            bytes >= 1024 -> String.format("%.2f KB", bytes / 1024.0)
+            else -> "$bytes B"
         }
     }
 }
@@ -323,17 +414,71 @@ class NetworkDiagnosticsEngine {
     suspend fun pingAddress(host: String): Pair<String, Long> = withContext(Dispatchers.IO) {
         val startTime = SystemClock.elapsedRealtime()
         return@withContext try {
+            // Try ICMP ping first (requires root for raw sockets)
+            // Fall back to TCP connection to port 80/443
             val address = InetAddress.getByName(host)
             val reachable = address.isReachable(3000)
             val latency = SystemClock.elapsedRealtime() - startTime
+            
             if (reachable) {
-                Pair("Reply from ${address.hostAddress}: bytes=32 time=${latency}ms TTL=118", latency)
+                Pair("Reply from ${address.hostAddress}: time=${latency}ms", latency)
             } else {
-                Pair("Ping request to $host timed out.", -1)
+                // Try TCP connection as fallback
+                val tcpLatency = tryTcpConnection(host)
+                if (tcpLatency >= 0) {
+                    Pair("TCP connection to $host succeeded: time=${tcpLatency}ms", tcpLatency)
+                } else {
+                    Pair("Ping request to $host timed out.", -1)
+                }
             }
         } catch (e: Exception) {
-            val fakeLatency = (12..38).random().toLong()
-            Pair("Reply from $host: bytes=32 time=${fakeLatency}ms TTL=64 (Simulated Diagnostic)", fakeLatency)
+            Pair("Ping error: ${e.message}", -1)
+        }
+    }
+
+    private fun tryTcpConnection(host: String): Long {
+        val ports = intArrayOf(80, 443, 5555, 22)
+        for (port in ports) {
+            val start = SystemClock.elapsedRealtime()
+            try {
+                val socket = Socket()
+                socket.connect(InetSocketAddress(host, port), 2000)
+                socket.close()
+                return SystemClock.elapsedRealtime() - start
+            } catch (e: Exception) {
+                // Try next port
+            }
+        }
+        return -1
+    }
+
+    suspend fun getNetworkInfo(): String = withContext(Dispatchers.IO) {
+        try {
+            val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+            val network = cm.activeNetwork ?: return "No active network"
+            val caps = cm.getNetworkCapabilities(network) ?: return "No network capabilities"
+            
+            val sb = StringBuilder()
+            sb.appendLine("Network Type: ${when {
+                caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> "Wi-Fi"
+                caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> "Cellular"
+                caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> "Ethernet"
+                else -> "Other"
+            }}")
+            sb.appendLine("Internet: ${caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)}")
+            sb.appendLine("Validated: ${caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)}")
+            sb.appendLine("Metered: ${caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED)}")
+            
+            if (caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) {
+                val linkUp = caps.linkUpBandwidthKbps
+                val linkDown = caps.linkDownBandwidthKbps
+                sb.appendLine("Link Up: ${linkUp} Kbps")
+                sb.appendLine("Link Down: ${linkDown} Kbps")
+            }
+            
+            sb.toString()
+        } catch (e: Exception) {
+            "Error getting network info: ${e.message}"
         }
     }
 }

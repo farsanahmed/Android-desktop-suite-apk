@@ -5,17 +5,66 @@
 # For more details, see
 #   http://developer.android.com/guide/developing/tools/proguard.html
 
-# If your project uses WebView with JS, uncomment the following
-# and specify the fully qualified class name to the JavaScript interface
-# class:
-#-keepclassmembers class fqcn.of.javascript.interface.for.webview {
-#   public *;
-#}
+# Preserve line numbers for stack traces
+-keepattributes SourceFile,LineNumberTable
+-renamesourcefileattribute SourceFile
 
-# Uncomment this to preserve the line number information for
-# debugging stack traces.
-#-keepattributes SourceFile,LineNumberTable
+# Keep Room entities and DAOs
+-keep class com.example.data.model.** { *; }
+-keep class com.example.data.local.** { *; }
 
-# If you keep the line number information, uncomment this to
-# hide the original source file name.
-#-renamesourcefileattribute SourceFile
+# Keep ViewModels and State classes
+-keep class com.example.ui.** { *; }
+
+# Keep engine classes
+-keep class com.example.data.engine.** { *; }
+
+# Keep kotlinx.coroutines
+-keep class kotlinx.coroutines.** { *; }
+
+# Keep DADB library
+-keep class dev.mobile.dadb.** { *; }
+-dontwarn dev.mobile.dadb.**
+
+# Keep Firebase AI
+-keep class com.google.firebase.ai.** { *; }
+
+# Keep OkHttp and Moshi
+-keep class okhttp3.** { *; }
+-keep class com.squareup.moshi.** { *; }
+-dontwarn okhttp3.**
+-dontwarn com.squareup.moshi.**
+
+# Keep Kotlin standard library
+-keep class kotlin.** { *; }
+
+# Keep AndroidX annotations
+-keep class androidx.annotation.** { *; }
+
+# Keep Compose runtime
+-keep class androidx.compose.runtime.** { *; }
+-keep class androidx.compose.ui.** { *; }
+-keep class androidx.compose.material3.** { *; }
+
+# Keep Activity Result APIs
+-keep class androidx.activity.result.** { *; }
+
+# Keep navigation
+-keep class androidx.navigation.** { *; }
+
+# Keep lifecycle
+-keep class androidx.lifecycle.** { *; }
+
+# Keep datastore
+-keep class androidx.datastore.** { *; }
+
+# Keep coil
+-keep class coil.** { *; }
+
+# Remove logging in release
+-assumenosideeffects class android.util.Log {
+    public static *** d(...);
+    public static *** v(...);
+    public static *** i(...);
+    public static *** w(...);
+}

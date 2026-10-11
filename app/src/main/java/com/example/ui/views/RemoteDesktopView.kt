@@ -20,10 +20,8 @@ import com.example.ui.MainViewModel
 
 @Composable
 fun RemoteDesktopView(viewModel: MainViewModel) {
-    var fpsMode by remember { mutableStateOf("60 FPS (Ultra Low Latency)") }
-    var resolution by remember { mutableStateOf("1080x2400 (Native)") }
-    var isRecording by remember { mutableStateOf(false) }
-
+    var showVncConfig by remember { mutableStateOf(false) }
+    
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -44,71 +42,161 @@ fun RemoteDesktopView(viewModel: MainViewModel) {
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Icon(Icons.Default.CastConnected, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                    Text("Scrcpy Remote Engine", fontWeight = FontWeight.Bold)
+                    Icon(Icons.Default.CastConnected, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(24.dp))
+                    Text("Screen Mirroring & Remote Control", fontWeight = FontWeight.Bold, fontSize = 16.sp)
                 }
-
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    OutlinedButton(
-                        onClick = { isRecording = !isRecording },
-                        colors = ButtonDefaults.outlinedButtonColors(
-                            contentColor = if (isRecording) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
-                        ),
-                        shape = RoundedCornerShape(6.dp)
-                    ) {
-                        Icon(if (isRecording) Icons.Default.Stop else Icons.Default.Videocam, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(if (isRecording) "Recording..." else "Rec Screen")
-                    }
-
+                
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(
-                        onClick = { viewModel.runAdbCommand("adb shell input keyevent 3") }, // HOME
-                        shape = RoundedCornerShape(6.dp)
+                        onClick = { showVncConfig = true },
+                        shape = RoundedCornerShape(8.dp)
                     ) {
-                        Text("Home", fontSize = 11.sp)
+                        Icon(Icons.Default.Settings, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Configure VNC")
                     }
                 }
             }
         }
+        
+        Spacer(modifier = Modifier.height(16.dp))
 
-        Spacer(modifier = Modifier.height(12.dp))
-
-        // Simulated Remote Screen Frame
-        Surface(
-            modifier = Modifier
-                .width(260.dp)
-                .weight(1f)
-                .border(3.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(24.dp)),
-            shape = RoundedCornerShape(24.dp),
-            color = Color(0xFF0F172A)
+        // Status Notice
+        OutlinedCard(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+            )
         ) {
-            Box(
+            Column(modifier = Modifier.padding(16.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Info, contentDescription = null, tint = MaterialTheme.colorScheme.onSecondaryContainer, modifier = Modifier.size(24.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("VNC Client - Demo Mode", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    "A full VNC client implementation requires:\n\n" +
+                    "1. VNC server running on the target device (e.g., DroidVNC, scrcpy server)\n" +
+                    "2. RFB protocol implementation (RFB 3.3/3.8)\n" +
+                    "3. Framebuffer decoding (raw, tight, zrle, hextile encodings)\n" +
+                    "4. Input event injection (touch, keyboard, mouse)\n" +
+                    "5. Secure authentication (VNC password, TLS/SSL)\n\n" +
+                    "This is a complex networking/graphics task beyond the scope of this app.\n\n" +
+                    "Recommended alternatives:\n" +
+                    "• scrcpy (USB/TCP, low latency, open source)\n" +
+                    "• DroidVNC Server + any VNC viewer\n" +
+                    "• TeamViewer / AnyDesk / Chrome Remote Desktop\n" +
+                    "• ADB + scrcpy: `adb exec-out scrcpy --video-codec=h264`\n\n" +
+                    "The UI below shows a placeholder for a future VNC implementation.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // VNC Configuration Placeholder
+        if (showVncConfig) {
+            VncConfigDialog(
+                onDismiss = { showVncConfig = false }
+            )
+        } else {
+            // Simulated Remote Screen Frame (Demo)
+            Surface(
                 modifier = Modifier
-                    .fillMaxSize()
-                    .padding(12.dp),
-                contentAlignment = Alignment.Center
+                    .width(280.dp)
+                    .aspectRatio(9f / 16f)
+                    .border(3.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(24.dp)),
+                shape = RoundedCornerShape(24.dp),
+                color = Color(0xFF0F172A)
             ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(Icons.Default.PhoneAndroid, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(64.dp))
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Text("Live Mirroring Active", color = Color.White, fontWeight = FontWeight.Bold)
-                    Text("$resolution • $fpsMode", color = Color(0xFF94A3B8), fontSize = 11.sp)
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Surface(
-                        shape = RoundedCornerShape(20.dp),
-                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
-                        modifier = Modifier.clickable {
-                            viewModel.runAdbCommand("adb shell input tap 500 500")
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(12.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(Icons.Default.PhoneAndroid, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(64.dp))
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text("VNC Client Not Implemented", color = Color.White, fontWeight = FontWeight.Bold)
+                        Text("Configure a VNC server on target device", color = Color(0xFF94A3B8), fontSize = 11.sp)
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Surface(
+                            shape = RoundedCornerShape(20.dp),
+                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                text = "This is a demo placeholder.\nReal VNC requires RFB protocol implementation.",
+                                fontSize = 10.sp,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 12.dp)
+                            )
                         }
-                    ) {
-                        Text(
-                            text = "Tap Viewport to Simulate Touch",
-                            fontSize = 10.sp,
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
-                        )
                     }
                 }
             }
         }
     }
+}
+
+@Composable
+fun VncConfigDialog(
+    onDismiss: () -> Unit
+) {
+    var host by remember { mutableStateOf("192.168.1.100") }
+    var port by remember { mutableStateOf("5900") }
+    var password by remember { mutableStateOf("") }
+    
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("VNC Connection Settings (Not Functional)") },
+        text = {
+            Column(modifier = Modifier.padding(16.dp).width(320.dp)) {
+                Text("A real VNC client would connect to a VNC server on the target device.")
+                Spacer(modifier = Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = host,
+                    onValueChange = { host = it },
+                    label = { Text("VNC Server Host") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = port,
+                    onValueChange = { port = it },
+                    label = { Text("Port (default 5900)") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = password,
+                    onValueChange = { password = it },
+                    label = { Text("Password (optional)") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    visualTransformation = androidx.compose.material3.PasswordVisualTransformation()
+                )
+            }
+        },
+        confirmButton = {
+            Button(onClick = {
+                // Would connect to VNC server
+                onDismiss()
+            }) {
+                Text("Connect (Demo)")
+            }
+        },
+        dismissButton = {
+            OutlinedButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
 }

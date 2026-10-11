@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -17,8 +18,12 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.data.engine.AdbConnectionManager
+import com.example.data.engine.AdbConnectionState
 import com.example.ui.MainViewModel
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.receiveAsFlow
 
 @Composable
 fun AdbFastbootView(viewModel: MainViewModel) {
@@ -48,14 +53,16 @@ fun AdbFastbootView(viewModel: MainViewModel) {
 fun AdbTerminalTab(viewModel: MainViewModel) {
     var commandInput by remember { mutableStateOf("") }
     val history by viewModel.terminalHistory.collectAsState()
-    
+
     val activeDevice by viewModel.adbConnectionManager.activeDevice.collectAsState()
     val connectionState by viewModel.adbConnectionManager.connectionState.collectAsState()
     val scope = rememberCoroutineScope()
-    
+
     var showWirelessDialog by remember { mutableStateOf(false) }
-    var wirelessIp by remember { mutableStateOf("192.168.1.105") }
+    var wirelessIp by remember { mutableStateOf("") }
     var wirelessPort by remember { mutableStateOf("5555") }
+    var pairingCode by remember { mutableStateOf("") }
+    var showPairingDialog by remember { mutableStateOf(false) }
 
     Column(
         modifier = Modifier
@@ -82,13 +89,24 @@ fun AdbTerminalTab(viewModel: MainViewModel) {
                         modifier = Modifier
                             .size(10.dp)
                             .background(
-                                color = if (activeDevice != null) Color(0xFF22C55E) else Color(0xFFEF4444),
-                                shape = androidx.compose.foundation.shape.CircleShape
+                                color = when (connectionState) {
+                                    is AdbConnectionState.Connected -> Color(0xFF22C55E)
+                                    is AdbConnectionState.Connecting -> Color(0xFFF59E0B)
+                                    is AdbConnectionState.Pairing -> Color(0xFF3B82F6)
+                                    else -> Color(0xFFEF4444)
+                                },
+                                shape = CircleShape
                             )
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = if (activeDevice != null) "${activeDevice?.model} (${activeDevice?.serial})" else "Disconnected",
+                        text = when (connectionState) {
+                            is AdbConnectionState.Connected -> "${activeDevice?.model} (${activeDevice?.serial})",
+                            is AdbConnectionState.Connecting -> "Connecting...",
+                            is AdbConnectionState.Pairing -> "Pairing...",
+                            is AdbConnectionState.Error -> "Error: ${connectionState.message}",
+                            else -> "Disconnected"
+                        },
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Bold
                     )
@@ -105,20 +123,51 @@ fun AdbTerminalTab(viewModel: MainViewModel) {
                     }
 
                     OutlinedButton(
+                        onClick = { showPairingDialog = true },
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                    ) {
+                        Icon(Icons.Default.Link, contentDescription = null, modifier = Modifier.size(14.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Pair Device", fontSize = 11.sp)
+                    }
+
+                    OutlinedButton(
                         onClick = {
                             scope.launch {
-                                viewModel.adbConnectionManager.restartAdbServer()
-                                viewModel.runAdbCommand("adb devices")
+                                viewModel.adbConnectionManager.disconnect()
                             }
                         },
                         contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
                     ) {
-                        Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(14.dp))
+                        Icon(Icons.Default.UsbOff, contentDescription = null, modifier = Modifier.size(14.dp))
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text("Restart Server", fontSize = 11.sp)
+                        Text("Disconnect", fontSize = 11.sp)
                     }
                 }
             }
+        }
+
+        // Connection Dialogs
+        if (showWirelessDialog) {
+            WirelessConnectDialog(
+                onDismiss = { showWirelessDialog = false },
+                onConnect = { ip, port ->
+                    scope.launch {
+                        viewModel.adbConnectionManager.connectWireless(ip, port)
+                    }
+                }
+            )
+        }
+
+        if (showPairingDialog) {
+            PairingDialog(
+                onDismiss = { showPairingDialog = false },
+                onPair = { ip, port, code ->
+                    scope.launch {
+                        viewModel.adbConnectionManager.pairWireless(ip, port, code)
+                    }
+                }
+            )
         }
 
         // Quick Action Row
@@ -227,6 +276,113 @@ fun AdbTerminalTab(viewModel: MainViewModel) {
 }
 
 @Composable
+fun WirelessConnectDialog(
+    onDismiss: () -> Unit,
+    onConnect: (String, Int) -> Unit
+) {
+    var ip by remember { mutableStateOf("") }
+    var port by remember { mutableStateOf("5555") }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Connect Wireless ADB") },
+        text = {
+            Column(modifier = Modifier.padding(16.dp).width(280.dp)) {
+                Text("Enter the IP address and port of the device with wireless debugging enabled.")
+                Spacer(modifier = Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = ip,
+                    onValueChange = { ip = it },
+                    label = { Text("IP Address") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = port,
+                    onValueChange = { port = it },
+                    label = { Text("Port (default 5555)") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
+                )
+            }
+        },
+        confirmButton = {
+            Button(onClick = {
+                if (ip.isNotBlank()) {
+                    onConnect(ip, port.toIntOrNull() ?: 5555)
+                }
+            }) {
+                Text("Connect")
+            }
+        },
+        dismissButton = {
+            OutlinedButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
+}
+
+@Composable
+fun PairingDialog(
+    onDismiss: () -> Unit,
+    onPair: (String, Int, String) -> Unit
+) {
+    var ip by remember { mutableStateOf("") }
+    var port by remember { mutableStateOf("5555") }
+    var code by remember { mutableStateOf("") }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Pair Wireless ADB") },
+        text = {
+            Column(modifier = Modifier.padding(16.dp).width(280.dp)) {
+                Text("Enable 'Wireless debugging' in Developer Options, then tap 'Pair with pairing code' to get the IP, port, and 6-digit code.")
+                Spacer(modifier = Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = ip,
+                    onValueChange = { ip = it },
+                    label = { Text("IP Address") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = port,
+                    onValueChange = { port = it },
+                    label = { Text("Port") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = code,
+                    onValueChange = { code = it },
+                    label = { Text("6-digit Pairing Code") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
+                )
+            }
+        },
+        confirmButton = {
+            Button(onClick = {
+                if (ip.isNotBlank() && code.isNotBlank()) {
+                    onPair(ip, port.toIntOrNull() ?: 5555, code)
+                }
+            }) {
+                Text("Pair")
+            }
+        },
+        dismissButton = {
+            OutlinedButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
+}
+
+@Composable
 fun FastbootStudioTab(viewModel: MainViewModel) {
     var partition by remember { mutableStateOf("boot") }
     var imagePath by remember { mutableStateOf("boot.img") }
@@ -244,113 +400,193 @@ fun FastbootStudioTab(viewModel: MainViewModel) {
         )
         Spacer(modifier = Modifier.height(12.dp))
 
-        // Quick Fastboot Actions
+        // Unavailable Notice
+        OutlinedCard(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.errorContainer,
+                contentColor = MaterialTheme.colorScheme.onErrorContainer
+            )
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.WarningAmber, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(24.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Fastboot Unavailable Over Network ADB", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    "Fastboot requires:\n" +
+                    "• Device in bootloader/fastboot mode (Power + Volume Down)\n" +
+                    "• Direct USB connection to a host computer\n" +
+                    "• Host running the fastboot binary (Android SDK Platform Tools)\n\n" +
+                    "This app communicates via ADB over TCP, which only works when Android is booted. " +
+                    "Fastboot operates in the bootloader before Android starts, so it cannot be accessed remotely.\n\n" +
+                    "To use fastboot, connect your device via USB to a computer with Android SDK Platform Tools installed.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Quick Fastboot Actions (shown but disabled)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(
                 onClick = { viewModel.runAdbCommand("fastboot devices") },
-                shape = RoundedCornerShape(8.dp)
+                shape = RoundedCornerShape(8.dp),
+                enabled = false
             ) {
                 Text("fastboot devices")
             }
             Button(
                 onClick = { viewModel.runAdbCommand("fastboot getvar all") },
-                shape = RoundedCornerShape(8.dp)
+                shape = RoundedCornerShape(8.dp),
+                enabled = false
             ) {
                 Text("getvar all")
             }
             OutlinedButton(
                 onClick = { showUnlockWarning = true },
                 shape = RoundedCornerShape(8.dp),
-                colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                enabled = false,
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f))
             ) {
                 Text("Unlock Bootloader")
             }
-        }
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        // Flasher Controls
-        OutlinedCard(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(12.dp)
-        ) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                Text("Flash Image to Partition", fontWeight = FontWeight.Bold)
-                Spacer(modifier = Modifier.height(8.dp))
-                OutlinedTextField(
-                    value = partition,
-                    onValueChange = { partition = it },
-                    label = { Text("Partition Name (boot, system, recovery, vendor)") },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                OutlinedTextField(
-                    value = imagePath,
-                    onValueChange = { imagePath = it },
-                    label = { Text("Image File Path (.img)") },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true
-                )
-                Spacer(modifier = Modifier.height(12.dp))
-                Button(
-                    onClick = { viewModel.runAdbCommand("fastboot flash $partition $imagePath") },
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(8.dp)
-                ) {
-                    Text("Execute Fastboot Flash $partition")
-                }
-            }
-        }
-
-        if (showUnlockWarning) {
-            AlertDialog(
-                onDismissRequest = { showUnlockWarning = false },
-                title = { Text("Warning: Bootloader Unlock") },
-                text = { Text("Unlocking the bootloader will erase all user data on the target Android device and void system hardware security. Proceed?") },
-                confirmButton = {
-                    Button(
-                        onClick = {
-                            viewModel.runAdbCommand("fastboot flashing unlock")
-                            showUnlockWarning = false
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
-                    ) {
-                        Text("Confirm Unlock")
-                    }
-                },
-                dismissButton = {
-                    OutlinedButton(onClick = { showUnlockWarning = false }) {
-                        Text("Cancel")
-                    }
-                }
-            )
         }
     }
 }
 
 @Composable
 fun LogcatViewerTab(viewModel: MainViewModel) {
+    var logLevel by remember { mutableStateOf("V") }
+    var searchQuery by remember { mutableStateOf("") }
+    var isPaused by remember { mutableStateOf(false) }
+    val logLines = remember { mutableStateListOf<String>() }
+    val scope = rememberCoroutineScope()
+
+    val activeDevice by viewModel.adbConnectionManager.activeDevice.collectAsState()
+    val connectionState by viewModel.adbConnectionManager.connectionState.collectAsState()
+    val isConnected = connectionState is AdbConnectionState.Connected
+
+    // Start/stop logcat based on connection state
+    LaunchedEffect(key1 = isConnected, key2 = isPaused, key3 = logLevel, key4 = searchQuery) {
+        if (isConnected && !isPaused) {
+            scope.launch {
+                viewModel.adbConnectionManager.startLogcat(logLevel, searchQuery) { line ->
+                    // This callback approach won't work well with Compose
+                    // We'll use the channel-based approach instead
+                }
+            }
+        } else {
+            viewModel.adbConnectionManager.stopLogcat()
+        }
+    }
+
+    // Real-time logcat stream
+    val logStream = remember {
+        viewModel.adbConnectionManager.logcatStream.receiveAsFlow()
+    }
+    val logStreamCollected by logStream.collectAsState(initial = emptyList())
+
     Column(
         modifier = Modifier
             .fillMaxSize()
             .padding(12.dp)
     ) {
+        // Toolbar
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text("System Logcat Stream", fontWeight = FontWeight.Bold)
-            Button(
-                onClick = { viewModel.runAdbCommand("adb logcat") },
-                shape = RoundedCornerShape(8.dp)
+            Text("Logcat Stream", fontWeight = FontWeight.Bold)
+
+            // Level filter
+            OutlinedTextField(
+                value = logLevel,
+                onValueChange = { logLevel = it.uppercase() },
+                label = { Text("Level") },
+                modifier = Modifier.width(80.dp),
+                singleLine = true
+            )
+
+            // Search
+            OutlinedTextField(
+                value = searchQuery,
+                onValueChange = { searchQuery = it },
+                label = { Text("Search") },
+                modifier = Modifier.weight(1f),
+                singleLine = true,
+                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) }
+            )
+
+            // Pause/Resume
+            IconButton(
+                onClick = {
+                    isPaused = !isPaused
+                    if (isPaused) {
+                        viewModel.adbConnectionManager.pauseLogcat()
+                    } else {
+                        viewModel.adbConnectionManager.resumeLogcat()
+                    }
+                }
             ) {
-                Text("Refresh Stream")
+                Icon(
+                    if (isPaused) Icons.Default.PlayArrow else Icons.Default.Pause,
+                    contentDescription = if (isPaused) "Resume" else "Pause"
+                )
+            }
+
+            // Clear
+            IconButton(
+                onClick = {
+                    scope.launch {
+                        viewModel.adbConnectionManager.clearLogcat()
+                        logLines.clear()
+                    }
+                }
+            ) {
+                Icon(Icons.Default.Delete, contentDescription = "Clear")
+            }
+
+            // Refresh (fetch latest dump)
+            IconButton(
+                onClick = {
+                    scope.launch {
+                        val (output, _) = viewModel.adbConnectionManager.executeShellCommand("logcat -d -v brief *:$logLevel -t 200")
+                        logLines.clear()
+                        logLines.addAll(output.lines().filter { searchQuery.isBlank() || it.contains(searchQuery, ignoreCase = true) })
+                    }
+                }
+            ) {
+                Icon(Icons.Default.Refresh, contentDescription = "Refresh")
             }
         }
+
         Spacer(modifier = Modifier.height(8.dp))
 
+        // Connection status
+        if (!isConnected) {
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                color = MaterialTheme.colorScheme.errorContainer,
+                shape = RoundedCornerShape(8.dp)
+            ) {
+                Text(
+                    "Not connected to a device. Use the ADB Terminal tab to connect via Wireless ADB or Pair Device.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onErrorContainer,
+                    modifier = Modifier.padding(16.dp)
+                )
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+        }
+
+        // Logcat Output
         Surface(
             modifier = Modifier
                 .fillMaxSize()
@@ -358,21 +594,48 @@ fun LogcatViewerTab(viewModel: MainViewModel) {
             color = Color(0xFF020617),
             shape = RoundedCornerShape(8.dp)
         ) {
-            Text(
-                text = """
-                    --------- beginning of system
-                    07-27 10:14:02.112 1204 1204 I ActivityManager: START u0 {act=android.intent.action.MAIN cat=[android.intent.category.LAUNCHER] pkg=com.aistudio.androiddesktopsuite} h=9812a1
-                    07-27 10:14:02.180 1204 1250 D AndroidDesktopSuite: Window Manager Acrylic Backdrop Surface attached.
-                    07-27 10:14:02.210 1204 1250 I SystemMonitor: Memory status updated: 3412 MB RAM / 64 GB Storage.
-                    07-27 10:14:02.250 1204 1260 D AdbService: Daemon connected via local socket 5555.
-                    07-27 10:14:02.300 1204 1260 I FastbootEngine: Ready for partition flash commands.
-                    07-27 10:14:02.340 1204 1270 V GeminiAssistant: Engine initialized with REST endpoint.
-                """.trimIndent(),
-                fontFamily = FontFamily.Monospace,
-                color = Color(0xFF22C55E),
-                fontSize = 11.sp,
-                modifier = Modifier.padding(12.dp)
-            )
+            if (logLines.isEmpty() && logStreamCollected.isEmpty()) {
+                Text(
+                    text = "Connect to a device and start logcat stream to see output.\n\n" +
+                           "Tip: Use level filter (V/D/I/W/E/F) and search to narrow results.",
+                    fontFamily = FontFamily.Monospace,
+                    color = Color(0xFF64748B),
+                    fontSize = 12.sp,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(12.dp)
+                        .wrapContentSize(Alignment.Center)
+                )
+            } else {
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                    reverseLayout = true
+                ) {
+                    items(logLines + logStreamCollected) { line ->
+                        Text(
+                            text = line,
+                            fontFamily = FontFamily.Monospace,
+                            color = getLogLineColor(line),
+                            fontSize = 11.sp,
+                            modifier = Modifier.fillMaxWidth().wrapContentWidth()
+                        )
+                    }
+                }
+            }
         }
+    }
+}
+
+private fun getLogLineColor(line: String): Color {
+    return when {
+        line.contains(":E ") || line.contains(" E ") -> Color(0xFFEF4444)
+        line.contains(":W ") || line.contains(" W ") -> Color(0xFFF59E0B)
+        line.contains(":I ") || line.contains(" I ") -> Color(0xFF22C55E)
+        line.contains(":D ") || line.contains(" D ") -> Color(0xFF3B82F6)
+        line.contains(":V ") || line.contains(" V ") -> Color(0xFF94A3B8)
+        else -> Color(0xFFE2E8F0)
     }
 }

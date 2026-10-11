@@ -10,7 +10,7 @@ plugins {
 }
 
 android {
-  namespace = "com.example"
+  namespace = "com.aistudio.androiddesktopsuite.wxsudv"
   compileSdk { version = release(36) { minorApiLevel = 1 } }
 
   defaultConfig {
@@ -21,6 +21,9 @@ android {
     versionName = "1.0"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    
+    // Remove BuildConfig GEMINI_API_KEY - using Firebase AI Logic instead
+    buildConfigField("String", "GEMINI_API_KEY", "\"\"")
   }
 
   signingConfigs {
@@ -42,21 +45,52 @@ android {
   buildTypes {
     release {
       isCrunchPngs = false
-      isMinifyEnabled = false
+      isMinifyEnabled = true
+      isShrinkResources = true
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
       signingConfig = signingConfigs.getByName("release")
+      // Disable debuggable in release
+      isDebuggable = false
+      // Disable test coverage
+      testCoverageEnabled = false
     }
-    debug { signingConfig = signingConfigs.getByName("debugConfig") }
+    debug { 
+      signingConfig = signingConfigs.getByName("debugConfig")
+      isDebuggable = true
+      isMinifyEnabled = false
+      isShrinkResources = false
+    }
   }
   compileOptions {
     sourceCompatibility = JavaVersion.VERSION_11
     targetCompatibility = JavaVersion.VERSION_11
   }
+  kotlinOptions {
+    jvmTarget = "11"
+    freeCompilerArgs += listOf("-Xopt-in=kotlin.RequiresOptIn")
+  }
   buildFeatures {
     compose = true
     buildConfig = true
   }
-  testOptions { unitTests { isIncludeAndroidResources = true } }
+  testOptions { 
+    unitTests { 
+      isIncludeAndroidResources = true 
+      returnDefaultValues = true
+    } 
+  }
+  
+  // Room database migrations - add when schema changes
+  // room {
+  //     schemaDirectory = "$projectDir/schemas"
+  // }
+  
+  // Packaging options to avoid duplicate files
+  packaging {
+    resources {
+      excludes += listOf("META-INF/*.kotlin_module")
+    }
+  }
 }
 
 // Configure the Secrets Gradle Plugin to use .env and .env.example files
@@ -114,6 +148,7 @@ dependencies {
   implementation(libs.okhttp)
   // implementation(libs.play.services.location)
   implementation(libs.retrofit)
+  implementation("dev.mobile:dadb:1.2.9")
   testImplementation(libs.androidx.compose.ui.test.junit4)
   testImplementation(libs.androidx.core)
   testImplementation(libs.androidx.junit)
