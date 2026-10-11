@@ -51,8 +51,6 @@ android {
       signingConfig = signingConfigs.getByName("release")
       // Disable debuggable in release
       isDebuggable = false
-      // Disable test coverage
-      testCoverageEnabled = false
     }
     debug { 
       signingConfig = signingConfigs.getByName("debugConfig")
@@ -65,9 +63,8 @@ android {
     sourceCompatibility = JavaVersion.VERSION_11
     targetCompatibility = JavaVersion.VERSION_11
   }
-  kotlinOptions {
-    jvmTarget = "11"
-    freeCompilerArgs += listOf("-Xopt-in=kotlin.RequiresOptIn")
+  kotlin {
+    jvmToolchain(11)
   }
   buildFeatures {
     compose = true
@@ -76,7 +73,6 @@ android {
   testOptions { 
     unitTests { 
       isIncludeAndroidResources = true 
-      returnDefaultValues = true
     } 
   }
   
