@@ -23,7 +23,7 @@ import com.example.data.engine.AdbConnectionState
 import com.example.ui.MainViewModel
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.receiveAsFlow
+import kotlinx.coroutines.channels.Channel
 
 @Composable
 fun AdbFastbootView(viewModel: MainViewModel) {
@@ -473,13 +473,10 @@ fun LogcatViewerTab(viewModel: MainViewModel) {
     val isConnected = connectionState is AdbConnectionState.Connected
 
     // Start/stop logcat based on connection state
-    LaunchedEffect(key1 = isConnected, key2 = isPaused, key3 = logLevel, key4 = searchQuery) {
+    LaunchedEffect(key1 = isConnected, key2 = isPaused) {
         if (isConnected && !isPaused) {
             scope.launch {
-                viewModel.adbConnectionManager.startLogcat(logLevel, searchQuery) { line ->
-                    // This callback approach won't work well with Compose
-                    // We'll use the channel-based approach instead
-                }
+                viewModel.adbConnectionManager.startLogcat(logLevel, searchQuery)
             }
         } else {
             viewModel.adbConnectionManager.stopLogcat()
