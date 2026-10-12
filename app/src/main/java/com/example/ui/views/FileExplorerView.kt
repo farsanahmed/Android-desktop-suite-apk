@@ -69,21 +69,6 @@ fun FileExplorerView(viewModel: MainViewModel) {
             showPermissionRationale = true
         }
     }
-    
-    // SAF document tree picker
-    val pickDirectory = rememberLauncherForActivityResult(
-        ActivityResultContracts.OpenDocumentTree()
-    ) { uri ->
-        if (uri != null) {
-            context.contentResolver.takePersistableUriPermission(
-                uri,
-                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-            )
-            persistedUri = uri
-            permissionStatus = PermissionStatus.SAFGranted
-            loadFilesForSAFUri(uri)
-        }
-    }
 
     // Initialize - check permissions
     LaunchedEffect(key1 = true) {
@@ -132,17 +117,6 @@ fun FileExplorerView(viewModel: MainViewModel) {
             viewModel.isFileLoading.value = true
             viewModel.currentPath.value = path
             viewModel.fileList.value = viewModel.fileEngine.getFilesForDirectory(path)
-            viewModel.isFileLoading.value = false
-        }
-    }
-
-    fun loadFilesForSAFUri(uri: Uri) {
-        scope.launch {
-            viewModel.isFileLoading.value = true
-            // For SAF, we can't use File API directly
-            // We'd need to use DocumentsContract to list files
-            // For now, show a message
-            viewModel.fileList.value = emptyList()
             viewModel.isFileLoading.value = false
         }
     }

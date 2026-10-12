@@ -49,15 +49,6 @@ fun ApkManagerView(viewModel: MainViewModel) {
         }
     }
 
-    // SAF file picker for APK selection
-    val pickApkFile = rememberLauncherForActivityResult(
-        ActivityResultContracts.OpenDocument()
-    ) { uri ->
-        if (uri != null) {
-            installApkFromUri(uri)
-        }
-    }
-
     fun installApkFromUri(uri: Uri) {
         scope.launch(Dispatchers.IO) {
             try {
