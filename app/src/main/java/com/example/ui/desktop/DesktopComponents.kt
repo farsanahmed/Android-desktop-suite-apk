@@ -37,7 +37,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.R
+import com.aistudio.androiddesktopsuite.wxsudv.R
 import com.example.data.model.DesktopApp
 import com.example.ui.MainViewModel
 import java.text.SimpleDateFormat
