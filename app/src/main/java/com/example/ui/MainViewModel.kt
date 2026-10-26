@@ -40,6 +40,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val fileEngine = FileCompressionEngine()
     val netEngine = NetworkDiagnosticsEngine()
     val aiEngine = GeminiAssistantEngine()
+    val appRepository = com.example.data.repository.AppRepository(application)
 
     // Desktop Environment State
     val openWindows = mutableStateListOf<DesktopApp>(DesktopApp.FILE_EXPLORER)
@@ -234,16 +235,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // APK Manager
     fun loadInstalledApks() {
         viewModelScope.launch(Dispatchers.IO) {
-            val sampleApks = listOf(
-                AppPackageInfo("Desktop Suite System Core", "com.aistudio.androiddesktopsuite", "2.5.0", 250, 48 * 1024 * 1024L, true, 34),
-                AppPackageInfo("Android System WebView", "com.google.android.webview", "122.0.6261.64", 6261064, 92 * 1024 * 1024L, true, 34),
-                AppPackageInfo("Google Play Services", "com.google.android.gms", "24.08.12", 240812, 180 * 1024 * 1024L, true, 34),
-                AppPackageInfo("Scrcpy Mirror Engine", "com.genymobile.scrcpy", "2.3.1", 231, 14 * 1024 * 1024L, false, 34),
-                AppPackageInfo("Terminal ADB Shell", "com.aistudio.term", "1.1.0", 110, 8 * 1024 * 1024L, false, 34),
-                AppPackageInfo("7-Zip Compression Utility", "org.7zip.android", "23.01", 2301, 12 * 1024 * 1024L, false, 34),
-                AppPackageInfo("Media Player Pro", "com.aistudio.mediaplayer", "3.0.1", 301, 28 * 1024 * 1024L, false, 34)
-            )
-            apkList.value = sampleApks
+            apkList.value = appRepository.getInstalledApps()
         }
     }
 

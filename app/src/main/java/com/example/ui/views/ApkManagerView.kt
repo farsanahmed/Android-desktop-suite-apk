@@ -30,6 +30,8 @@ import kotlinx.coroutines.withContext
 @Composable
 fun ApkManagerView(viewModel: MainViewModel) {
     val apks by viewModel.apkList.collectAsState()
+    var searchQuery by remember { mutableStateOf("") }
+    var systemFilter by remember { mutableStateOf(0) } // 0 all, 1 system, 2 user
     var snackbarMessage by remember { mutableStateOf<String?>(null) }
     var showInstallDialog by remember { mutableStateOf(false) }
     var showUnavailableNotice by remember { mutableStateOf(false) }
@@ -169,12 +171,31 @@ fun ApkManagerView(viewModel: MainViewModel) {
 
         Spacer(modifier = Modifier.height(12.dp))
 
+        OutlinedTextField(
+            value = searchQuery,
+            onValueChange = { searchQuery = it },
+            label = { Text("Search apps") },
+            modifier = Modifier.fillMaxWidth()
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilterChip(selected = systemFilter == 0, onClick = { systemFilter = 0 }, label = { Text("All") })
+            FilterChip(selected = systemFilter == 1, onClick = { systemFilter = 1 }, label = { Text("System") })
+            FilterChip(selected = systemFilter == 2, onClick = { systemFilter = 2 }, label = { Text("User") })
+        }
+        Spacer(modifier = Modifier.height(8.dp))
+
+        val filtered = apks.filter { app ->
+            (searchQuery.isBlank() || app.appName.contains(searchQuery, true) || app.packageName.contains(searchQuery, true)) &&
+            (systemFilter == 0 || (systemFilter == 1 && app.isSystemApp) || (systemFilter == 2 && !app.isSystemApp))
+        }
+
         // APK List
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            items(apks) { app ->
+            items(filtered) { app ->
                 ApkItemCard(
                     app = app,
                     onExtract = {
@@ -193,6 +214,20 @@ fun ApkManagerView(viewModel: MainViewModel) {
                                 snackbarMessage = "Could not find APK path for ${app.packageName}"
                             }
                         }
+                    },
+                    onAppInfo = {
+                        val intent = Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                            data = Uri.parse("package:${app.packageName}")
+                        }
+                        context.startActivity(intent)
+                        snackbarMessage = "Opened app info for ${app.appName}"
+                    },
+                    onShare = {
+                        val intent = Intent(Intent.ACTION_SEND).apply {
+                            type = "text/plain"
+                            putExtra(Intent.EXTRA_TEXT, "${app.appName} (${app.packageName})")
+                        }
+                        context.startActivity(Intent.createChooser(intent, "Share"))
                     },
                     onUninstall = { uninstallPackage(app.packageName) },
                     onLaunch = {
@@ -251,7 +286,9 @@ fun ApkItemCard(
     app: AppPackageInfo,
     onExtract: () -> Unit,
     onUninstall: () -> Unit,
-    onLaunch: () -> Unit
+    onLaunch: () -> Unit,
+    onAppInfo: () -> Unit,
+    onShare: () -> Unit
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -329,6 +366,22 @@ fun ApkItemCard(
                         ) {
                             Text("Uninstall", fontSize = 11.sp)
                         }
+                    }
+
+                    OutlinedButton(
+                        onClick = onAppInfo,
+                        shape = RoundedCornerShape(6.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("App Info", fontSize = 11.sp)
+                    }
+
+                    OutlinedButton(
+                        onClick = onShare,
+                        shape = RoundedCornerShape(6.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Share", fontSize = 11.sp)
                     }
 
                     Button(
