@@ -24,7 +24,7 @@ APP_NAME="Gradle"
 APP_BASE_NAME=`basename "$0"`
 
 # Add default JVM options here. You can also use JAVA_OPTS and GRADLE_OPTS to pass JVM options to this script.
-DEFAULT_JVM_OPTS='"-Xmx64m" "-Xms64m"'
+DEFAULT_JVM_OPTS=' "-Xmx64m" "-Xms64m" '
 
 # Use the maximum available, or set MAX_FD != -1 to use that value.
 MAX_FD="maximum"
@@ -130,20 +130,20 @@ fi
 
 # Split up the JVM_OPTS And GRADLE_OPTS values into an array, following the shell quoting and substitution rules
 splitJvmOpts() {
-    JVM_OPTS=()
+    JVM_OPTS=""
     for arg in "$@"; do
-        JVM_OPTS[${#JVM_OPTS[*]}]="$arg"
+        JVM_OPTS="$JVM_OPTS \"$arg\""
     done
 }
 
 # Escape application args
 escapeForShell() {
-    escaped_args=()
+    escaped_args=""
     for arg in "$@"; do
         if echo "$arg" | grep -q ' ' ; then
-            escaped_args[${#escaped_args[*]}]="\"$arg\""
+            escaped_args="$escaped_args \"$arg\""
         else
-            escaped_args[${#escaped_args[*]}]="$arg"
+            escaped_args="$escaped_args $arg"
         fi
     done
 }
@@ -153,9 +153,9 @@ eval splitJvmOpts $DEFAULT_JVM_OPTS
 eval splitJvmOpts $JAVA_OPTS
 eval splitJvmOpts $GRADLE_OPTS
 
-JVM_OPTS[${#JVM_OPTS[*]}]="-Dorg.gradle.appname=$APP_BASE_NAME"
+JVM_OPTS="$JVM_OPTS \"-Dorg.gradle.appname=$APP_BASE_NAME\""
 
 eval escapeForShell "$@"
 
 # Execute Gradle
-exec "$JAVACMD" "${JVM_OPTS[@]}" -classpath "$CLASSPATH" org.gradle.wrapper.GradleWrapperMain "${escaped_args[@]}"
+exec "$JAVACMD" $JVM_OPTS -classpath "$CLASSPATH" org.gradle.wrapper.GradleWrapperMain $escaped_args
