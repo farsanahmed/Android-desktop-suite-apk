@@ -1,7 +1,6 @@
 #!/bin/sh
-#
+
 # Gradle start up script for UN*X
-#
 
 # Attempt to set APP_HOME
 # Resolve links: $0 may be a link
@@ -66,7 +65,6 @@ CLASSPATH=$APP_HOME/gradle/wrapper/gradle-wrapper.jar
 # Determine the Java command to use to start the JVM.
 if [ -n "$JAVA_HOME" ] ; then
     if [ -x "$JAVA_HOME/jre/sh/java" ] ; then
-        # IBM's JDK on AIX uses strange locations for the executables
         JAVACMD="$JAVA_HOME/jre/sh/java"
     else
         JAVACMD="$JAVA_HOME/bin/java"
@@ -97,7 +95,7 @@ if [ "$cygwin" = "false" -a "$darwin" = "false" -a "$nonstop" = "false" ] ; then
             warn "Could not set maximum file descriptor limit: $MAX_FD"
         fi
     else
-        warn "Could not query maximum file descriptor limit: $MAX_FD_LIMIT"
+        warn "Could not query maximum file descriptor limit"
     fi
 fi
 
@@ -111,32 +109,27 @@ if [ "$cygwin" = "true" -o "$msys" = "true" ] ; then
     APP_HOME=`cygpath --path --mixed "$APP_HOME"`
     CLASSPATH=`cygpath --path --mixed "$CLASSPATH"`
     JAVACMD=`cygpath --unix "$JAVACMD"`
-
     # We build the pattern for arguments to be converted via cygpath
-    ROOTDIRSRAW=`find -L / -maxdepth 1 -mindepth 1 -type d 2>/dev/null`
-    SEP=""
-    for dir in $ROOTDIRSRAW ; do
-        ROOTDIRS="$ROOTDIRS$SEP$dir"
-        SEP="|"
+    ROOTDIRSRAW=`find -L / -maxdepth 1 -mindepth 1 -type d 2>/dev/null | sed -e 's@^/@@' -e 's@ /$@@'`
+    ROOTDIRS=""
+    for dir in $ROOTDIRSRAW; do
+        ROOTDIRS="$ROOTDIRS `cygpath --path --mixed \"$dir\"`"
     done
-    OURCYGPATTERN="^($ROOTDIRS)"
-    # Add a user-defined pattern to the cygpath arguments
-    if [ "$GRADLE_CYGPATTERN" != "" ] ; then
-        OURCYGPATTERN="$OURCYGPATTERN|$GRADLE_CYGPATTERN"
-    fi
-    # Now convert the arguments - kludge to limit ourselves to /bin/sh
-    while [ "$#" -gt 0 ] ; do
-        ARG="$1"
-        if echo "$ARG" | egrep -q "$OURCYGPATTERN" ; then
+    OURCYGPATTERN="^(`echo "$ROOTDIRS" | sed -e 's/ /|/g'`)"
+    # Now convert the arguments - if the argument starts with a pattern matching
+    # OURCYGPATTERN we convert the argument to Windows format
+    for ARG in "$@" ; do
+        CHECK=`echo "$ARG" | sed -e "s/^\(.*\)$/\1/"`
+        if echo "$CHECK" | egrep -q "$OURCYGPATTERN" ; then
             ARG=`cygpath --path --mixed "$ARG"`
         fi
         shift
-        set -- "$@" "$ARG"
+        set -- "$@""$ARG"
     done
 fi
 
 # Split up the JVM_OPTS And GRADLE_OPTS values into an array, following the shell quoting and substitution rules
-function splitJvmOpts() {
+splitJvmOpts() {
     JVM_OPTS=()
     for arg in "$@"; do
         JVM_OPTS[${#JVM_OPTS[*]}]="$arg"
@@ -144,21 +137,25 @@ function splitJvmOpts() {
 }
 
 # Escape application args
-function escapeForShell() {
+escapeForShell() {
     escaped_args=()
     for arg in "$@"; do
         if echo "$arg" | grep -q ' ' ; then
-            escaped_args[${#escaped_args[*]}]="'$arg'"
+            escaped_args[${#escaped_args[*]}]="\"$arg\""
         else
             escaped_args[${#escaped_args[*]}]="$arg"
         fi
     done
 }
 
-splitJvmOpts $DEFAULT_JVM_OPTS $JAVA_OPTS $GRADLE_OPTS
+# Collect all arguments for the java command, following the shell quoting and substitution rules
+eval splitJvmOpts $DEFAULT_JVM_OPTS
+eval splitJvmOpts $JAVA_OPTS
+eval splitJvmOpts $GRADLE_OPTS
+
 JVM_OPTS[${#JVM_OPTS[*]}]="-Dorg.gradle.appname=$APP_BASE_NAME"
 
-escapeForShell "$@"
-set -- "${escaped_args[@]}"
+eval escapeForShell "$@"
 
-exec "$JAVACMD" "${JVM_OPTS[@]}" -classpath "$CLASSPATH" org.gradle.wrapper.GradleWrapperMain "$@"
+# Execute Gradle
+exec "$JAVACMD" "${JVM_OPTS[@]}" -classpath "$CLASSPATH" org.gradle.wrapper.GradleWrapperMain "${escaped_args[@]}"
